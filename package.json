@@ -1,0 +1,22 @@
+{
+  "name": "mosca-server",
+  "version": "1.0.0",
+  "description": "mqtt broker",
+  "main": "index.js",
+  "scripts": {
+    "test": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "github"
+  },
+  "keywords": [
+    "sss"
+  ],
+  "author": "vt",
+  "license": "ISC",
+  "dependencies": {
+    "mongodb": "^2.2.31",
+    "mosca": "^2.5.2"
+  }
+}
