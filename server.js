@@ -99,22 +99,25 @@ function setup() {
   	console.log('Mosca server is up and running')
 }
 
-// clientInfo collection = {
-    // clientId: ""
-    // clientState: ""
-    // subscribers: [
-    //     {
-    //         topic: "",
-    //         act: ""
-    //     }
-    // ],
-    // publishers:[
-    //     {
-    //         topic: "",
-    //         act: ""
-    //     }
-    // ]
-// }
+
+/*
+clientInfo collection = {
+    clientId: ""
+    clientState: ""
+    subscribers: [
+        {
+            topic: "",
+            state: ""
+        }
+    ],
+    publishers:[
+        {
+            topic: "",
+            state: ""
+        }
+    ]
+}
+*/
 
 // fired whena  client is connected
 // add "clientId", "clientStatus"
@@ -124,20 +127,33 @@ server.on('clientConnected', function(client) {
     mongoClient.connect('mongodb://127.0.0.1:27017/nthdb', function(err, db) {
         if (err) throw err;
 
+        // add "clientId" into "clientInfo" collection
         var clientInfo = db.collection('clientInfo');
-            
-        var data = {
+        var infoData = {
             clientId: client.id,
-            clientState: "connected"
+            clientState: "connected",
+            firstTime: Date(),
+            lastTime: ""
         }
-        
-        // upsert =true: Neu ko tìm thấy dữ liệu filter, thì insert dữ liệu mới vào
-        clientInfo.updateOne({clientId: client.id}, {$set: data}, {upsert: true}, function (err,res) {
+        clientInfo.updateOne({clientId: client.id}, {$set: infoData}, {upsert: true}, function (err,res) {
             //neu xay ra loi
             if (err) throw err;
             //neu khong co loi
             console.log('client connected mongodb', res.modifiedCount);
         });
+
+        // add "clientId" into "clientPublish" collection
+        var clientPublish = db.collection('clientPublish');
+        var pubData = {
+            clientId: client.id
+        }
+        clientPublish.updateOne({clientId: client.id}, {$set: pubData}, {upsert: true}, function (err,res) {
+            //neu xay ra loi
+            if (err) throw err;
+            //neu khong co loi
+            console.log('client connected mongodb', res.modifiedCount);
+        });    
+
         db.close();
     });
 
@@ -146,6 +162,52 @@ server.on('clientConnected', function(client) {
 // fired when a message is received
 server.on('published', function(packet, client) {
   	console.log('Published : ', JSON.stringify(packet.payload));
+
+    mongoClient.connect('mongodb://127.0.0.1:27017/nthdb', function(err, db) {
+        if (err) throw err;
+
+        // add "publishers" into "clientInfo" collection
+        if(client){
+            var clientInfo = db.collection('clientInfo');
+            var infoData =  {
+                topic: packet.topic,
+                state: "on"
+            }
+            // update state "publishers.state" in "clientInfo" collection
+            clientInfo.update(
+                {clientId: client.id, "publishers.topic": packet.topic},
+                {$set: {"publishers.$.state": infoData.state}},
+                function(err, res) {
+                    if (err) throw err;
+                    // console.log('Subscribe mongodb:', res);
+            })
+            // add object in array "publishers"
+            clientInfo.update(
+                {clientId: client.id}, 
+                {$addToSet: {publishers: infoData}}, 
+                function (err,res) {
+                    if (err) throw err;
+                    // console.log('Subscribe mongodb:', res);
+            });
+
+            // add publish data to "clientPublish"
+            var clientData = db.collection('clientData');
+            var pubData = {
+                clientId: client.id,
+                topic: packet.topic,
+                value: packet.payload,
+                timestamp: Date()
+            }
+            clientData.insertOne(
+                pubData, 
+                function (err,res) {
+                    if (err) throw err;
+                    // console.log('Subscribe mongodb:', res);
+            });
+        }
+
+        db.close();
+    });
 });
  
 // fired when a client subscribes to a topic
@@ -160,15 +222,23 @@ server.on('subscribed', function(topic, client) {
 
   	    var	data =  {
             topic: topic,
-            act: "on"
+            state: "on"
         }
+        // delele "subscribers"
+        clientInfo.update(
+            {clientId: client.id, "subscribers.topic": topic},
+            {$set: {"subscribers.$.state": data.state}},
+            function(err, res) {
+                if (err) throw err;
+                // console.log('Subscribe mongodb:', res);
+        })
         // add object in array "subscribers"
   	    clientInfo.update(
             {clientId: client.id}, 
             {$addToSet: {subscribers: data}}, 
             function (err,res) {
                 if (err) throw err;
-                console.log('Subscribe mongodb:', res);
+                // console.log('Subscribe mongodb:', res);
   	    });
 
   	    db.close();
@@ -178,7 +248,7 @@ server.on('subscribed', function(topic, client) {
  
 // fired when a client subscribes to a topic
 server.on('unsubscribed', function(topic, client) {
-  	console.log('unsubscribed : ', topic);
+  	//console.log('unsubscribed : ', topic);
 
     mongoClient.connect('mongodb://127.0.0.1:27017/nthdb', function(err, db) {
         if (err) throw err;
@@ -189,14 +259,14 @@ server.on('unsubscribed', function(topic, client) {
         
         // upsert =true: Neu ko tìm thấy dữ liệu filter, thì insert dữ liệu mới vào
         clientInfo.update(
-            {clientId: client.id, "subscribers.act": "on"}, 
-            {$set: {"subscribers.$.act": data}}, 
+            {clientId: client.id, "subscribers.state": "on"}, 
+            {$set: {"subscribers.$.state": data}}, 
             {multi: true}, 
             function (err,res) {
                 //neu xay ra loi
                 if (err) throw err;
                 //neu khong co loi
-                console.log('Update thanh cong');
+                console.log('unsubscribed success :', topic);
         });
 
         db.close();
@@ -218,16 +288,41 @@ server.on('clientDisconnected', function(client) {
         var clientInfo = db.collection('clientInfo');
             
         var data = {
-            clientState: "disconnected"
+            clientState: "disconnected",
+            lastTime: Date()
+            // state: "off"
         }
         
-        // upsert =true: Neu ko tìm thấy dữ liệu filter, thì insert dữ liệu mới vào
-        clientInfo.updateOne({clientId: client.id}, {$set: data}, function (err,res) {
-            //neu xay ra loi
-            if (err) throw err;
-            //neu khong co loi
-            console.log('Update thanh cong');
+        // update "publishers.state" in  "clientInfo"
+        var cursor = clientInfo.find({ clientId: client.id});
+        cursor.forEach(function (doc) {
+            // if (err) throw err;
+
+            doc.publishers.forEach(function (publisher) {
+                  // if (err2) throw err2;
+                  if (publisher.state == "on") {
+                        publisher.state="off";
+                  }
+
+                  console.log('disconnected :', publisher);
+            });
+
+            console.log('dis doc: ', doc)
+            clientInfo.save(doc, function(err, res){
+                if (err) throw err;
+                console.log('clientDisconnected success');
+            });
+          });
+
+        // update "clientState", "lastTime" in "clientInfo"
+        clientInfo.updateOne(
+            {clientId: client.id}, 
+            {$set: data}, 
+            function (err,res) {
+                if (err) throw err;
+                console.log('clientDisconnected success');
         });
+
         db.close();
     });
 
