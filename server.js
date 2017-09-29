@@ -4,56 +4,16 @@ var httpServer = http.createServer();
 var mongoClient = require('mongodb').MongoClient;
 
 
-// //var mongoose = require('mongoose');
-
-
-
-// // var uri = 'mongodb://localhost/nthdb';
-// // var options = { promiseLibrary: require('bluebird') };
-// //var db = mongoose.connection;
-
-
-// // var db = mongoose.createConnection(uri, options);
-
-// // db.on('error', console.error.bind(console, 'connection error:'));
-// db.on('error', console.error);
-
-// db.once('open', function(){
-//     console.log('MongoDb connected');
-//     //tao schema
-//     var clientIdSchema = new mongoose.Schema({
-//         clientId: String, 
-//         type: String, 
-//         Status: String, 
-//         topicPub: Array, 
-//         topicSub: Array
-//     });
-//     // tao model
-//     var clientId = mongoose.model('clientId', clientIdSchema);
-
-//     client1 =  new clientId({clientId:"123", Status: "connected"});
-
-//     client1.save(function(err, Obj){
-//         if (err) {
-//             console.log(err);
-//         } else {
-//             console.log('saved successfully:', Obj);
-//         }
-//     });
-
-// });
-
-
-// var ascoltatore = {
-//   type: 'mongo',
-//   url: 'mongodb://localhost:27017/moscamqtt',	// database name
-//   pubsubCollection: 'mycol',			// collection name
-//   mongo: {}mm
-// 	// mongo: {
-// 	// 	id: 'admin',
-// 	// 	pwd: 'password'
-// 	// }	
-// };
+/*var ascoltatore = {
+  type: 'mongo',
+  url: 'mongodb://localhost:27017/moscamqtt',	// database name
+  pubsubCollection: 'mycol',			// collection name
+  mongo: {}mm
+	// mongo: {
+	// 	id: 'admin',
+	// 	pwd: 'password'
+	// }	
+};*/
 
 var settings = {
   port: 1884
@@ -84,12 +44,23 @@ var authorizeSubscribe = function (client, topic, callback) {
     callback(null, auth);
 }
 
+
+
 //here we start mosca
 var server = new mosca.Server(settings);
 server.attachHttpServer(httpServer);
+
+/*httpServer.get('/index.htm', function (req, res) {
+   res.sendFile( __dirname + "/" + "index.htm" );
+})*/
+
 httpServer.listen(9000);
 server.on('ready', setup);
  
+// httpServer.use('/', index);    
+ 
+
+
 // fired when the mqtt server is ready
 function setup() {
 	server.authenticate = authenticate;
@@ -127,36 +98,51 @@ server.on('clientConnected', function(client) {
     mongoClient.connect('mongodb://127.0.0.1:27017/nthdb', function(err, db) {
         if (err) throw err;
 
-        // add "clientId" into "clientInfo" collection
         var clientInfo = db.collection('clientInfo');
         var infoData = {
-            clientId: client.id,
             clientState: "connected",
-            firstTime: Date(),
-            lastTime: ""
+            session: { 
+                startTime: Date(),
+                endTime: ""
+            }
         }
-        clientInfo.updateOne({clientId: client.id}, {$set: infoData}, {upsert: true}, function (err,res) {
-            //neu xay ra loi
-            if (err) throw err;
-            //neu khong co loi
-            console.log('client connected mongodb', res.modifiedCount);
+
+        var newInfoData = {
+            clientId: client.id,    // mqtt client ID
+            dateInit: Date(),           // the first time device connect to server
+            clientState: "connected",   // state of client
+            session: {              // sesstion interval
+                startTime: Date(),  
+                endTime: ""
+            }
+        }
+
+        // if found: update without "clientId" and "dateInit"
+        // if not found: insert new_info_data
+        clientInfo.find({clientId: client.id}).count(function(err, count){
+            if (err) throw err
+            else if (count==0){         // not found
+                console.log('count:', count);
+                clientInfo.insert(
+                    newInfoData,
+                    function (err,res) {
+                        if (err) throw err;
+                        console.log('client connected updateOne-mongodb', res.modifiedCount);
+                        db.close();
+                });
+            } else if (count==1) {      // found
+                console.log('count:', count);
+                clientInfo.updateOne(
+                    { clientId: client.id}, 
+                    { $set: infoData},  
+                    function (err,res) {
+                        if (err) throw err;
+                        console.log('client connected updateOne-mongodb', res.modifiedCount);
+                        db.close();
+                });
+            }                
         });
-
-        // add "clientId" into "clientPublish" collection
-        var clientPublish = db.collection('clientPublish');
-        var pubData = {
-            clientId: client.id
-        }
-        clientPublish.updateOne({clientId: client.id}, {$set: pubData}, {upsert: true}, function (err,res) {
-            //neu xay ra loi
-            if (err) throw err;
-            //neu khong co loi
-            console.log('client connected mongodb', res.modifiedCount);
-        });    
-
-        db.close();
     });
-
 });
  
 // fired when a message is received
@@ -173,40 +159,50 @@ server.on('published', function(packet, client) {
                 topic: packet.topic,
                 state: "on"
             }
-            // update state "publishers.state" in "clientInfo" collection
-            clientInfo.update(
-                {clientId: client.id, "publishers.topic": packet.topic},
-                {$set: {"publishers.$.state": infoData.state}},
-                function(err, res) {
-                    if (err) throw err;
-                    // console.log('Subscribe mongodb:', res);
-            })
-            // add object in array "publishers"
-            clientInfo.update(
-                {clientId: client.id}, 
-                {$addToSet: {publishers: infoData}}, 
-                function (err,res) {
-                    if (err) throw err;
-                    // console.log('Subscribe mongodb:', res);
-            });
 
-            // add publish data to "clientPublish"
-            var clientData = db.collection('clientData');
-            var pubData = {
-                clientId: client.id,
-                topic: packet.topic,
-                value: packet.payload,
-                timestamp: Date()
-            }
-            clientData.insertOne(
-                pubData, 
-                function (err,res) {
-                    if (err) throw err;
-                    // console.log('Subscribe mongodb:', res);
+            clientInfo.find({clientId: client.id, publishers: {$elemMatch: {topic: packet.topic}}})
+            .count(function(err, count) {
+                if (err) throw err
+                var clientData = db.collection('clientData');
+                var publishData = {
+                    clientId: client.id,
+                    topic: packet.topic,
+                    value: packet.payload,
+                    timestamp: Date()
+                }
+                clientData.insertOne(
+                    publishData, 
+                    function (err, res) {
+                        if (err) throw err;
+                        else {
+                            // not found: insert new "publishers"  (insert object in array)
+                            if (count==0) {
+                                console.log('count:', count);
+                                clientInfo.update(
+                                    { clientId: client.id}, 
+                                    { $addToSet: { publishers: infoData}}, 
+                                    function (err,res) {
+                                        if (err) throw err;
+                                        console.log('publish info update:');
+                                        db.close();
+                                });
+                            } 
+                            // found: update "publishers.state"
+                            else if (count==1) {
+                                console.log('count:', count);
+                                clientInfo.update(
+                                    { clientId: client.id, "publishers.topic": packet.topic},
+                                    { $set: {"publishers.$.state": infoData.state}},
+                                    function(err, res) {
+                                        if (err) throw err;
+                                        console.log('publish info insert :');
+                                        db.close();
+                                })
+                            }
+                        }
+                });
             });
         }
-
-        db.close();
     });
 });
  
@@ -224,31 +220,43 @@ server.on('subscribed', function(topic, client) {
             topic: topic,
             state: "on"
         }
-        // delele "subscribers"
-        clientInfo.update(
-            {clientId: client.id, "subscribers.topic": topic},
-            {$set: {"subscribers.$.state": data.state}},
-            function(err, res) {
-                if (err) throw err;
-                // console.log('Subscribe mongodb:', res);
-        })
-        // add object in array "subscribers"
-  	    clientInfo.update(
-            {clientId: client.id}, 
-            {$addToSet: {subscribers: data}}, 
-            function (err,res) {
-                if (err) throw err;
-                // console.log('Subscribe mongodb:', res);
-  	    });
 
-  	    db.close();
+        clientInfo.find({clientId: client.id, subscribers: {$elemMatch: {topic: topic}}}).count(function(err, count) {
+            if (err) throw err
+            // not found: insert new "subscribers" (insert object in array)
+            else if (count==0) {
+                console.log('count:', count);
+                clientInfo.update(
+                  { clientId: client.id}, 
+                  { $addToSet: { subscribers: data}}, 
+                  function (err,res) {
+                      if (err) throw err;
+                      // console.log('Subscribe mongodb:', res);
+                      db.close();
+                });
+            }
+            // found: update "subscribers.state" 
+            else if (count==1) {
+                console.log('count:', count);
+                clientInfo.update(
+                    { clientId: client.id, "subscribers.topic": topic},
+                    { $set: {"subscribers.$.state": data.state}},
+                    function(err, res) {
+                        if (err) throw err;
+                        // console.log('Subscribe mongodb:', res);
+                        db.close();
+                })
+            }
+
+        });
+
   	});
 
 });
  
 // fired when a client subscribes to a topic
 server.on('unsubscribed', function(topic, client) {
-  	//console.log('unsubscribed : ', topic);
+  	console.log('unsubscribed : ', topic);
 
     mongoClient.connect('mongodb://127.0.0.1:27017/nthdb', function(err, db) {
         if (err) throw err;
@@ -257,19 +265,15 @@ server.on('unsubscribed', function(topic, client) {
             
         var data = "off"
         
-        // upsert =true: Neu ko tìm thấy dữ liệu filter, thì insert dữ liệu mới vào
+        // 
         clientInfo.update(
-            {clientId: client.id, "subscribers.state": "on"}, 
-            {$set: {"subscribers.$.state": data}}, 
-            {multi: true}, 
+            { clientId: client.id, "subscribers.state": "on"}, 
+            { $set: {"subscribers.$.state": data}}, 
             function (err,res) {
-                //neu xay ra loi
                 if (err) throw err;
-                //neu khong co loi
                 console.log('unsubscribed success :', topic);
+                db.close();
         });
-
-        db.close();
     });
 });
  
@@ -286,44 +290,31 @@ server.on('clientDisconnected', function(client) {
         if (err) throw err;
 
         var clientInfo = db.collection('clientInfo');
-            
-        var data = {
-            clientState: "disconnected",
-            lastTime: Date()
-            // state: "off"
-        }
-        
+                 
         // update "publishers.state" in  "clientInfo"
-        var cursor = clientInfo.find({ clientId: client.id});
+        var cursor = clientInfo.find({ clientId: client.id, publishers: {$elemMatch: {state: "on"}}});
+        
         cursor.forEach(function (doc) {
-            // if (err) throw err;
+
+            doc.session.endTime = Date();
 
             doc.publishers.forEach(function (publisher) {
-                  // if (err2) throw err2;
-                  if (publisher.state == "on") {
-                        publisher.state="off";
-                  }
-
-                  console.log('disconnected :', publisher);
+                if (publisher.state == "on") {
+                    publisher.state="off";
+                }
             });
-
-            console.log('dis doc: ', doc)
-            clientInfo.save(doc, function(err, res){
-                if (err) throw err;
-                console.log('clientDisconnected success');
+            // update: "disconnected" , "publishers.state"s
+            clientInfo.updateOne(
+                { clientId: client.id }, 
+                { $set: 
+                    { clientState: "disconnected", session: doc.session, publishers: doc.publishers}
+                },
+                function(err, res){
+                    if (err) throw err;
+                    console.log('clientDisconnected success');
+                    db.close();
             });
-          });
-
-        // update "clientState", "lastTime" in "clientInfo"
-        clientInfo.updateOne(
-            {clientId: client.id}, 
-            {$set: data}, 
-            function (err,res) {
-                if (err) throw err;
-                console.log('clientDisconnected success');
-        });
-
-        db.close();
+            
+        });            
     });
-
 });
