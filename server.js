@@ -122,11 +122,11 @@ server.on('clientConnected', function(client) {
             }
         }
 
-        // if found: update without "clientId" and "dateInit"
-        // if not found: insert new_info_data
+        // if found 'clientId' in mongodb: update info for client
+        // if not found 'clientId' in mongodb: insert new client 
         clientInfo.find({clientId: client.id}).count(function(err, count){
             if (err) throw err
-            else if (count==0){         // not found
+            else if (count==0){         // not found: update info for client 
                 console.log('count:', count);
                 clientInfo.insert(
                     newInfoData,
@@ -135,7 +135,7 @@ server.on('clientConnected', function(client) {
                         console.log('client connected updateOne-mongodb', res.modifiedCount);
                         db.close();
                 });
-            } else if (count==1) {      // found
+            } else if (count==1) {      // found: insert new client
                 console.log('count:', count);
                 clientInfo.updateOne(
                     { clientId: client.id}, 
@@ -157,14 +157,16 @@ server.on('published', function(packet, client) {
     mongoClient.connect('mongodb://127.0.0.1:27017/nthdb', function(err, db) {
         if (err) throw err;
 
-        // add "publishers" into "clientInfo" collection
+        // insert data when client connected to server 
         if(client){
             var clientInfo = db.collection('clientInfo');
             var infoData =  {
                 topic: packet.topic,
                 state: "on"
             }
-
+            // find "publishers.topic" is exist or not exist in database
+            // if found: update "publishers.state" from "off" -> "on"  (client is publishing data to topic)
+            // if not found: insert new "publishers" for database ('clientInfo' collection)
             clientInfo.find({clientId: client.id, publishers: {$elemMatch: {topic: packet.topic}}})
             .count(function(err, count) {
                 if (err) throw err
@@ -175,6 +177,7 @@ server.on('published', function(packet, client) {
                     value: packet.payload,
                     timestamp: Date()
                 }
+                // insert publish data to "clientData" collection
                 clientData.insertOne(
                     publishData, 
                     function (err, res) {
@@ -192,7 +195,7 @@ server.on('published', function(packet, client) {
                                         db.close();
                                 });
                             } 
-                            // found: update "publishers.state"
+                            // found: update "publishers.state" 
                             else if (count==1) {
                                 console.log('count:', count);
                                 clientInfo.update(
@@ -226,7 +229,7 @@ server.on('subscribed', function(topic, client) {
             topic: topic,
             state: "on"
         }
-
+        
         clientInfo.find({clientId: client.id, subscribers: {$elemMatch: {topic: topic}}}).count(function(err, count) {
             if (err) throw err
             // not found: insert new "subscribers" (insert object in array)
@@ -260,6 +263,7 @@ server.on('subscribed', function(topic, client) {
 
 });
  
+
 // fired when a client subscribes to a topic
 server.on('unsubscribed', function(topic, client) {
   	console.log('unsubscribed : ', topic);
