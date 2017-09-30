@@ -71,10 +71,15 @@ function setup() {
 }
 
 
-/*
+/* 
 clientInfo collection = {
-    clientId: ""
-    clientState: ""
+    clientId: "",
+    dateInit: "",
+    clientState: "",
+    session: {
+        startTime: 
+        endTime:
+    },
     subscribers: [
         {
             topic: "",
@@ -88,7 +93,7 @@ clientInfo collection = {
         }
     ]
 }
-*/
+ */
 
 // fired whena  client is connected
 // add "clientId", "clientStatus"
@@ -194,6 +199,7 @@ server.on('published', function(packet, client) {
                                     { clientId: client.id, "publishers.topic": packet.topic},
                                     { $set: {"publishers.$.state": infoData.state}},
                                     function(err, res) {
+                                console.log('count:', count);
                                         if (err) throw err;
                                         console.log('publish info insert :');
                                         db.close();
@@ -282,8 +288,10 @@ server.on('clientDisconnecting', function(client) {
   	console.log('clientDisconnecting : ', client.id);
 });
  
-// fired when a client is disconnected
-// add "status: disconnected" into collection: clientInfo
+/* 
+fired when a client is disconnected
+add "status: disconnected" into collection: clientInfo
+ */
 server.on('clientDisconnected', function(client) {
   	console.log('clientDisconnected : ', client.id);
     mongoClient.connect('mongodb://127.0.0.1:27017/nthdb', function(err, db) {
